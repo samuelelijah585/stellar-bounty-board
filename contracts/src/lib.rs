@@ -5,7 +5,7 @@ mod test;
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short,
-    token::Client as TokenClient, Address, Env, String,
+    token::Client as TokenClient, Address, Env, String, Vec,
 };
 
 // ─── Contract Version ─────────────────────────────────────────────────────────
@@ -611,6 +611,47 @@ impl StellarBountyBoardContract {
             .unwrap_or(0)
     }
 
+pub fn get_next_bounty_id(env: Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::NextBountyId)
+            .unwrap_or(0)
+    }
+
+    /// Read-only view function to enumerate bounties on-chain.
+    pub fn get_all_bounties(env: Env, start: u64, limit: u32) -> Vec<Bounty> {
+        let enforced_limit = if limit > 50 { 50 } else { limit };
+        let mut result = Vec::new(&env);
+
+        let next_id = env
+            .storage()
+            .persistent()
+            .get(&DataKey::NextBountyId)
+            .unwrap_or(0);
+
+        // Return empty Vec immediately if start is out of bounds or invalid
+        if start == 0 || start > next_id || enforced_limit == 0 {
+            return result;
+        }
+
+        let mut id = start;
+        let mut count = 0u32;
+
+        // Loop up to the limit or until we exceed the highest allocated bounty ID
+        while count < enforced_limit && id <= next_id {
+            // Check if the bounty actually exists in storage before reading to prevent a panic
+            if env.storage().persistent().has(&DataKey::Bounty(id)) {
+                let mut bounty = read_bounty(&env, id);
+                expire_if_needed(&env, &mut bounty);
+                result.push_back(bounty);
+            }
+            id += 1;
+            count += 1;
+        }
+
+        result
+    }
+
     /// Returns the cumulative fee statistics for the contract.
     ///
     /// Returns a [`FeeStats`] with `total_collected = 0` and `bounty_count = 0`
@@ -624,24 +665,7 @@ impl StellarBountyBoardContract {
                 bounty_count: 0,
             })
     }
-}
-
-/// Atomically increments the cumulative FeeStats stored on-chain.
-///
-/// Called inside both `release_bounty` and the release path of `resolve_dispute`
-/// so the stats are always consistent with token transfers.
-fn accumulate_fee_stats(env: &Env, fee_amount: i128) {
-    let mut stats: FeeStats = env
-        .storage()
-        .persistent()
-        .get(&DataKey::FeeStats)
-        .unwrap_or(FeeStats {
-            total_collected: 0,
-            bounty_count: 0,
-        });
-    stats.total_collected += fee_amount;
-    stats.bounty_count += 1;
-    env.storage().persistent().set(&DataKey::FeeStats, &stats);
+} main
 }
 
 fn read_bounty(env: &Env, bounty_id: u64) -> Bounty {
